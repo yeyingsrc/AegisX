@@ -6,13 +6,15 @@ AegisX 是一款基于 **LangGraph** 和 **LLM (大语言模型)** 构建的下�
 
 - **🤖 多智能体协同架构**：由 Manager Agent 统一调度，SQLi、XSS、Fuzz 等专项 Agent 协同工作，实现复杂漏洞的自动化发现。
 - **📈 反馈驱动的策略进化**：系统不仅执行探测，还会根据每一轮的响应结果（延迟、长度差异、状态码等）动态调整 Payload 策略。
+- **🧠 记忆与去重系统 (Redis)**：
+  - **流量去重**：基于 Redis 存储请求指纹（Fingerprint），确保在复杂扫描任务中不重复处理相同接口。
+  - **历史记忆**：自动提取并存储每个 Host 的历史参数集（Param Set），为 Fuzz 模块提供上下文支撑。
 - **🚀 静态+动态双引擎**：
   - **首轮探测**：使用内置的高频静态 Payload 库进行快速覆盖。
   - **后续进化**：针对复杂场景，调用 LLM 生成具有针对性的绕过（Bypass）Payload。
 - **📂 完善的项目管理与持久化**：
   - 基于 SQLite 的项目化存储，记录所有漏洞详情、原始请求/响应包。
   - 完整的 Agent 对话日志审计，确保测试过程可追溯。
-- **🛡️ 强大的 WAF 绕过能力**：AI 会自动分析被拦截的特征，并尝试内联注释、等价函数替换、多重编码等绕过技术。
 
 ## 🏗️ 系统架构
 
@@ -20,14 +22,94 @@ AegisX 是一款基于 **LangGraph** 和 **LLM (大语言模型)** 构建的下�
 - **Strategist Node**：基于历史执行结果生成探测策略。
 - **Executor Node**：高性能异步并发探测执行引擎。
 - **Analyzer Node**：深度分析探测结果，判定漏洞并提供修复建议。
+- **Redis Cache/Storage**：负责指纹去重、任务队列缓存以及 Host 级别参数记忆。
 - **Persistence Layer**：基于项目维度的漏洞与日志持久化。
 
-## 🛠️ 技术栈
+## 💻 核心代码实现
 
-- **Core**: Python 3.10+
+为了方便理解系统的工作原理，以下展示了 AegisX 的部分核心逻辑：
+
+### 1. 多智能体工作流 (LangGraph)
+系统通过 `Manager` 节点分析原始流量，并根据识别出的攻击面动态调度不同的专项 Worker 子图。
+
+```python
+# src/agents/manager/graph.py
+def create_manager_graph():
+    builder = StateGraph(AgentState)
+    manager = ManagerAgent()
+
+    # 添加主节点与专项 Worker 节点
+    builder.add_node("manager", manager.analyze_request)
+    builder.add_node("sqli_worker", sqli_graph)
+    builder.add_node("xss_worker", xss_graph)
+
+    # 基于任务列表进行条件路由 (并发执行)
+    def route_tasks(state: AgentState):
+        destinations = []
+        if "sqli" in state["tasks"]: destinations.append("sqli_worker")
+        if "xss" in state["tasks"]: destinations.append("xss_worker")
+        return destinations if destinations else END
+
+    builder.add_conditional_edges("manager", route_tasks)
+    return builder.compile()
+```
+
+### 2. Redis 记忆与指纹系统
+利用 Redis 实现高效的流量去重和 Host 参数画像，避免重复扫描并增强 Fuzz 效果。
+
+```python
+# src/utils/redis_helper.py
+def push_task(self, task_data: dict):
+    # 1. 存储请求指纹，实现扫描去重
+    self.client.sadd("webagent:fingerprints", task_data["fingerprint"])
+    
+    # 2. 提取并记忆 Host 级别的历史参数集
+    host = extract_host(task_data["url"])
+    params = extract_params(task_data)
+    if params:
+        self.client.sadd(f"webagent:host:{host}:params", *params)
+```
+
+### 3. 反馈驱动的策略进化 (Strategist)
+Strategist 不仅仅生成 Payload，它还会参考 `history_results` 中每一轮的响应时间、长度变化和相似度趋势。
+
+```python
+# src/core/engine/strategist.py
+def generate_strategy(self, user_context: dict):
+    # 提取历史探测结果摘要
+    history_summary = [
+        {
+            "payload": r["payload"],
+            "elapsed": r["elapsed"], 
+            "len_diff": r["len_diff"]
+        } for r in user_context.get("history_results", [])
+    ]
+    
+    # 将历史趋势作为 Context 喂给 LLM，实现“进化”探测
+    user_prompt = f"历史探测执行趋势:\n{json.dumps(history_summary)}\n请根据以上结果调整绕过策略..."
+    # ... 调用 LLM 返回优化后的 Payload
+```
+
+### 4. 异步并发执行引擎 (Executor)
+利用 `httpx` 和 `asyncio.Semaphore` 实现高并发且受控的探测执行，支持 RESTful 路径、Query 和 Body 自动注入。
+
+```python
+# src/core/engine/executor.py
+async def execute_batch(self, test_cases: List[Dict]):
+    async with httpx.AsyncClient(verify=False, proxy=self.proxies) as client:
+        # 使用信号量控制并发数，防止触发频率限制
+        async with self.semaphore:
+            tasks = [self._run_single_test(client, case) for case in test_cases]
+            return await asyncio.gather(*tasks)
+```
+
+## �️ 技术栈
+
+- **Core**: Python 3.11+
 - **Orchestration**: [LangGraph](https://github.com/langchain-ai/langgraph)
 - **LLM Framework**: [LangChain](https://github.com/langchain-ai/langchain)
 - **Database**: SQLite (SQLAlchemy)
+- **Cache & Memory**: **Redis** (指纹去重、参数记忆)
 - **Async Engine**: httpx
 - **Logging**: Loguru & Custom Auditor
 
@@ -38,13 +120,15 @@ AegisX 是一款基于 **LangGraph** 和 **LLM (大语言模型)** 构建的下�
 pip install -r requirements.txt
 ```
 
-### 2. 配置环境
-在根目录创建 `.env` 文件并配置您的 API Key：
+### 2. 环境准备
+- 确保已安装并启动 **Redis** 服务。
+- 在根目录创建 `.env` 文件并配置相关 Key：
 ```env
 OPENAI_API_KEY=your_key_here
 OPENAI_API_BASE=https://api.openai.com/v1
 MODEL_NAME_MANAGER=gpt-4o
 MODEL_NAME_WORKER=gpt-4o-mini
+REDIS_URL=redis://localhost:6379/0
 ```
 
 ### 3. 启动扫描
