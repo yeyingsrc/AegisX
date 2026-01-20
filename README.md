@@ -1,6 +1,8 @@
 # AegisX - AI 驱动的智能 Web 渗透测试进化系统
 
 AegisX 是一款基于 **LangGraph** 和 **LLM (大语言模型)** 构建的下一代 Web 安全自动化渗透测试代理系统。它通过多智能体协作（Multi-Agent Collaboration）和反馈驱动的策略进化，模拟资深安全专家的思维逻辑，对目标进行深度漏洞探测。
+<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/b6b279fb-3ada-42c2-af63-6e308091832c" />
+<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/22dfa6aa-401c-484a-8e1e-82e406c7fdd3" />
 
 ## 🌟 核心特性
 
