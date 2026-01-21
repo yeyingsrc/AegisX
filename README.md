@@ -2,6 +2,10 @@
 
 AegisX 是一款基于 **LangGraph** 和 **LLM (大语言模型)** 构建的下一代 Web 安全自动化渗透测试代理系统。它通过多智能体协作（Multi-Agent Collaboration）和反馈驱动的策略进化，模拟资深安全专家的思维逻辑，对目标进行深度漏洞探测。
 
+<img width="1887" height="956" alt="image" src="https://github.com/user-attachments/assets/7d9dc231-6fae-4deb-875f-c89de0ffe894" />
+
+<img width="1023" height="704" alt="image" src="https://github.com/user-attachments/assets/cfa66131-4904-40e7-83d4-971ca10ec726" />
+
 ## 🌟 核心特性
 
 - **🤖 多智能体协同架构**：由 Manager Agent 统一调度，SQLi、XSS、Fuzz 等专项 Agent 协同工作，实现复杂漏洞的自动化发现。
@@ -174,6 +178,8 @@ npm run dev
 
 ## 📊 数据存储
 漏洞结果和 Agent 日志将存储在 `data/webagent.db` 中。您可以通过项目名称查询特定的扫描记录。
+
+![38c1ee07f2b252a4051aafefa673ddf0](https://github.com/user-attachments/assets/994b0358-077c-4261-a678-96103cee76ae)
 
 ---
 **免责声明**：本工具仅用于授权的安全测试与教学研究，严禁用于任何非法的网络攻击活动。使用者需自行承担因使用本工具而产生的一切法律责任。
