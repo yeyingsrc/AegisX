@@ -179,3 +179,5 @@ npm run dev
 
 ---
 **免责声明**：本工具仅用于授权的安全测试与教学研究，严禁用于任何非法的网络攻击活动。使用者需自行承担因使用本工具而产生的一切法律责任。
+![76d3805d94d001a2ee5fb7f6e1331db9](https://github.com/user-attachments/assets/90ee7805-3cad-4767-9bdc-791c66652220)
+
