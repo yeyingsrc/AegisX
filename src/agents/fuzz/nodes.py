@@ -5,8 +5,6 @@ from src.config.settings import settings
 from src.utils.auditor import auditor
 from src.core.llm.service import create_audited_llm
 from src.agents.fuzz.state import FuzzState
-from src.core.engine.strategist import GenericStrategist
-from src.core.engine.executor import GenericExecutor
 from src.core.prompts.fuzz import FUZZ_GENERATOR_PROMPT, FUZZ_ANALYZER_PROMPT
 from src.utils.redis_helper import redis_helper
 from loguru import logger

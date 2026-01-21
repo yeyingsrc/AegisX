@@ -5,11 +5,16 @@ import operator
 
 def reduce_overwrite(left, right):
     """
-    覆盖策略：并发写入时，保留非空的新值。
-    如果都是相同的值，直接返回。
+    通用覆盖策略：忽略 None 值，防止意外覆盖。
     """
     if right is None:
         return left
+    return right
+
+def reduce_allow_none(left, right):
+    """
+    允许 None 的覆盖策略：用于需要显式清空的字段（如 planned_data）。
+    """
     return right
 
 class AgentState(TypedDict):
@@ -34,16 +39,5 @@ class AgentState(TypedDict):
     # 消息记录 (用于 LangGraph 内部通信)
     messages: Annotated[List[BaseMessage], add_messages]
 
-    # 分析反馈记忆 (列表形式以支持多轮追溯)
-    analysis_feedback: Annotated[List[str], operator.add]
-
     # 漏洞发现汇总
     findings: Annotated[List[dict], operator.add]
-
-    # 历史探测执行结果汇总 (用于指导策略进化)
-    history_results: Annotated[List[dict], operator.add]
-
-    # 并发任务重试计数 (隔离)
-    sqli_retry_count: Annotated[int, reduce_overwrite]
-    xss_retry_count: Annotated[int, reduce_overwrite]
-    fuzz_retry_count: Annotated[int, reduce_overwrite]

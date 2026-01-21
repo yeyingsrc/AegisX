@@ -37,21 +37,28 @@ SQLI_GENERATOR_PROMPT = """你是一个 SQL 注入渗透测试专家。请根据
      - 资源版本号 (v=1.0), 纯 UI 控制参数 (theme=dark), 语言 (lang=en)。
      - 提交按钮名称 (submit=Login)。
 
-3. 占位符处理（强制规则）：
-   - 必须保留 'points' 中的 '{{{{PAYLOAD}}}}' 占位符结构。
-   - 例如输入 'http://site.com/path/{{{{PAYLOAD}}}}'，输出必须是 'http://site.com/path/{{{{PAYLOAD}}}}'，严禁简化为 'path'。
-
-4. 动态策略调整（基于 Feedback）：
-   - **如果 feedback 指示 WAF 拦截**（403, "Malicious"）：
-     - 启用混淆：使用内联注释 (/**/), URL 编码, Unicode 编码。
-     - 等价替换：AND -> &&, OR -> ||, SPACE -> +, = -> LIKE。
-   - **如果 feedback 指示 无响应差异或高延迟**（Blind）：
-     - 增加延时阈值：使用更长的 SLEEP 时间（如 10秒）以区分网络波动。
-     - 尝试算术运算：id=1-1, id=1*1 观察响应变化。
+40. 占位符处理（强制规则）：
+   - 在生成的 'request' 对象中，将需要探测的位置（URL、Header 或 Body）替换为 {{{{原始值}}}} 的形式。例如，如果原始参数 name=admin，则替换为 name={{{{admin}}}}。
+   - 必须确保 'request' 的结构（method, target_url, headers, body）与原始请求逻辑一致。
+   - 严禁修改原始请求中的关键业务逻辑，仅在需要 Fuzz 的参数值位置注入占位符。
 
 5. 输出格式：
-   必须输出 JSON: {{"test_cases": [ {{"parameter": "参数名或完整占位符串", "payload": "具体Payload"}} ]}}
-   若无高价值目标，返回空列表。"""
+   必须输出 JSON 字典，格式如下：
+   {{
+     "request": {{
+      "method": "GET/POST",
+      "target_url": "http://.../path?name={{{{admin}}}}&submit=查询",
+      "headers": {{ "User-Agent": "...", "Cookie": "..." }},
+      "body": "..." 
+    }},
+    "test_cases": [
+      {{
+        "parameter": "{{{{admin}}}}",
+        "payload": ["' or 1=1", "admin' --", "sleep(5)"]
+      }}
+    ]
+   }}
+   若无高价值目标，返回空的 test_cases 列表。"""
 
 SQLI_ANALYZER_PROMPT = """你是一个 Web 安全专家，专注于 SQL 注入漏洞分析。
 
@@ -64,7 +71,7 @@ SQLI_ANALYZER_PROMPT = """你是一个 Web 安全专家，专注于 SQL 注入�
 - **布尔/联合注入成功**：
     - **相似度低** (similarity < 0.90)：响应内容结构发生显著变化。
     - **长度差异大** (abs(len_diff) > 50)：响应长度明显不同。
-    - **逻辑差异**：Payload 导致响应内容或状态码与基准请求产生**逻辑一致的差异**（例如 AND 1=1 正常，AND 1=2 变短或报错）。
+    - **逻辑差异**：Payload 导致响应内容 or 状态码与基准请求产生**逻辑一致的差异**（例如 AND 1=1 正常，AND 1=2 变短或报错）。
     - **注意**：如果所有 Payload 都导致响应变为空或报错，且无逻辑区分（即 True/False Payload 表现一致），这**不是**注入成功，请归类为 GIVE_UP 或 RETRY (WAF)。
 
 ### 2. 判定标准 (RETRY) - 必须给出明确的“策略建议”

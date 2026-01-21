@@ -18,51 +18,43 @@ class GenericStrategist:
             model_kwargs={"response_format": {"type": "json_object"}}
         )
 
-    def generate(self, vuln_type: str, system_prompt: str, user_context: dict, request_id: str, project_name: str = "Default") -> list:
+    def generate(self, vuln_type: str, system_prompt: str, user_context: dict, request_id: str, project_name: str = "Default") -> dict:
         """
-        通用生成方法
-        :param vuln_type: 漏洞类型 (如 "SQLi", "XSS")
-        :param system_prompt: 专门针对该漏洞的系统提示词
-        :param user_context: 包含 url, points, original_body, feedback, full_request 等的上下文
-        :param request_id: 任务 ID
-        :param project_name: 项目名称
+        通用生成方法：返回符合 StructuredExecutor 要求的结构化数据包
         """
-        user_prompt = "目标 URL: {url}\n待测试参数: {points}\n"
+        # 使用普通的字符串拼接，避免在构建阶段使用 f-string 导致花括号转义混乱
+        user_content = "### 目标上下文\n"
+        user_content += "原始请求: {full_request_json}\n"
+        user_content += "潜在探测点: {points_str}\n"
+        
         feedback = user_context.get("feedback")
         if feedback:
-            if isinstance(feedback, list):
-                feedback_str = "\n".join([f"- {f}" for f in feedback])
-                user_prompt += "历史轮次分析反馈汇总（请参考这些反馈不断优化绕过策略）:\n{feedback}\n"
-            else:
-                feedback_str = feedback
-                user_prompt += "上轮分析反馈（请根据此反馈调整策略）: {feedback}\n"
-        else:
-            feedback_str = ""
+            user_content += "分析反馈: {feedback_str}\n"
         
-        # 注入历史执行结果 (包含所有历史轮次数据，用于进化策略)
         history_results = user_context.get("history_results")
         if history_results:
-            user_prompt += "历史探测执行结果汇总（包含最近多轮的详细响应指标，请根据这些数据的变化趋势调整并进化你的 Payload 策略）:\n{history_results}\n"
-
-        if user_context.get("full_request"):
-            user_prompt += "原始完整请求上下文: {full_request}\n"
-            
-        user_prompt += "原始响应片段: {orig}"
+            user_content += "历史探测结果汇总:\n{history_results_json}\n"
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),
-            ("user", user_prompt)
+            ("user", user_content)
         ])
         
-        chain = prompt | self.audited_llm.llm
+        # 准备所有输入变量，集中进行 JSON 序列化
+        points = user_context.get('points', [])
+        if points and isinstance(points[0], dict):
+            points_str = "\n".join([f"- 参数: {p['name']}, 原始值: {p['value']}, 类型: {p['type']}, 建议占位符: {p['placeholder']}" for p in points])
+        else:
+            points_str = ", ".join(points)
+
         inputs = {
-            "url": user_context.get("url", ""),
-            "points": ", ".join(user_context.get("points", [])),
-            "orig": user_context.get("orig", "")[:500],
-            "feedback": feedback_str,
-            "history_results": json.dumps(user_context.get("history_results", []), ensure_ascii=False),
-            "full_request": json.dumps(user_context.get("full_request", {}), ensure_ascii=False)
+            "full_request_json": json.dumps(user_context.get('full_request', {}), ensure_ascii=False),
+            "points_str": points_str,
+            "feedback_str": str(feedback) if feedback else "",
+            "history_results_json": json.dumps(history_results, ensure_ascii=False) if history_results else "[]"
         }
+        
+        chain = prompt | self.audited_llm.llm
         
         try:
             response = self.audited_llm.invoke(
@@ -75,13 +67,15 @@ class GenericStrategist:
             )
             
             data = json.loads(response.content)
-            test_cases = data.get("test_cases", [])
             
-            logger.info(f"[{vuln_type}] 策略生成完成 | 数量: {len(test_cases)}")
-            if not test_cases:
-                logger.warning(f"[{vuln_type}] LLM 未生成任何测试用例。响应内容: {response.content}")
+            # 兼容性处理：确保返回结构符合 StructuredExecutor 要求
+            structured_packet = {
+                "request": data.get("request", user_context.get("full_request", {})),
+                "test_cases": data.get("test_cases", [])
+            }
             
-            return test_cases
+            logger.info(f"[{vuln_type}] 策略生成完成 | 探测点数量: {len(structured_packet['test_cases'])}")
+            return structured_packet
         except Exception as e:
             logger.error(f"[{vuln_type}] 生成 Payload 失败: {e}")
-            return []
+            return {"request": user_context.get("full_request", {}), "test_cases": []}

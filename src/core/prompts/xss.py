@@ -31,21 +31,28 @@ XSS_GENERATOR_PROMPT = """你是一个 Web 安全专家，专注于 XSS (跨站�
      - 数字ID (id=123), 时间戳 (ts=123456), 布尔开关 (flag=true)。
      - 纯系统参数 (token=xyz, session_id=abc)。
 
-3. 占位符处理（强制规则）：
-   - 必须保留 'points' 中的 '{{{{PAYLOAD}}}}' 占位符结构。
-   - 例如输入 'http://site.com/path/{{{{PAYLOAD}}}}'，输出必须是 'http://site.com/path/{{{{PAYLOAD}}}}'，严禁简化为 'path'。
-
-4. 动态策略调整（基于 Feedback）：
-   - **如果 feedback 指示 WAF 拦截**（403, "Blocked"）：
-     - 启用混淆：使用 HTML 实体编码 (&#x3c;), URL 编码 (%3c), JavaScript Unicode (\u003c)。
-     - 尝试 SVG/Details 等冷门标签：<svg/onload=alert(1)>, <details/ontoggle=alert(1)>。
-   - **如果 feedback 指示 部分过滤**（如 <script> 被删）：
-     - 尝试双写绕过：<scr<script>ipt>。
-     - 尝试大小写混合：<ScRiPt>。
+33. 占位符处理（强制规则）：
+   - 在生成的 'request' 对象中，将需要探测的位置（URL、Header 或 Body）替换为 {{{{原始值}}}} 的形式。例如，如果原始参数 name=admin，则替换为 name={{{{admin}}}}。
+   - 必须确保 'request' 的结构（method, target_url, headers, body）与原始请求逻辑一致。
+   - 严禁修改原始请求中的关键业务逻辑，仅在需要 Fuzz 的参数值位置注入占位符。
 
 5. 输出格式：
-   必须输出 JSON: {{"test_cases": [ {{"parameter": "参数名或完整占位符串", "payload": "具体Payload"}} ]}}
-   若无高价值目标，返回空列表。"""
+   必须输出 JSON 字典，格式如下：
+   {{
+     "request": {{
+       "method": "GET/POST",
+       "target_url": "http://.../path?name={{{{admin}}}}&submit=查询",
+       "headers": {{ "User-Agent": "...", "Cookie": "..." }},
+       "body": "..." 
+     }},
+     "test_cases": [
+       {{
+         "parameter": "{{{{admin}}}}",
+         "payload": ["<script>alert(1)</script>", "<img src=x onerror=alert(1)>", "\\\"> <script>alert(1)</script>"]
+       }}
+     ]
+   }}
+   若无高价值目标，返回空的 test_cases 列表。"""
 
 XSS_ANALYZER_PROMPT = """你是一个 Web 安全专家，专注于 XSS 漏洞分析。
 

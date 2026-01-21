@@ -35,13 +35,7 @@ class TaskRunner:
                     "response_body": request.get("response_body", ""),
                     "tasks": [],
                     "messages": [],
-                    "audit_log": [],
-                    "findings": [],
-                    "history_results": [],
-                    "sqli_retry_count": 0,
-            "xss_retry_count": 0,
-            "fuzz_retry_count": 0,
-            "analysis_feedback": []
+                    "findings": []
         }
                 
                 logger.info(f"开始处理任务: {initial_state['request_id']} | {initial_state['method']} {initial_state['target_url']}")

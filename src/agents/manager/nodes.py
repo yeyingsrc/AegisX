@@ -75,10 +75,5 @@ class ManagerAgent:
         logger.info(f"Manager 决策完成，识别到潜在漏洞类型: {tasks}")
         
         return {
-            "tasks": tasks, 
-            "messages": [response],
-            "sqli_retry_count": 0,
-                "xss_retry_count": 0,
-                "fuzz_retry_count": 0,
-                "analysis_feedback": []
+            "tasks": tasks
             }

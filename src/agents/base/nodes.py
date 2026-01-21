@@ -6,7 +6,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.config.settings import settings
 from src.core.llm.service import create_audited_llm
 from src.core.engine.strategist import GenericStrategist
-from src.core.engine.executor import GenericExecutor
+from src.core.engine.structured_executor import StructuredExecutor
 from loguru import logger
 
 class BaseVulnNodes:
@@ -20,7 +20,7 @@ class BaseVulnNodes:
     def __init__(self, retry_key: str = "retry_count"):
         self.retry_key = retry_key
         self.strategist = GenericStrategist()
-        self.executor = GenericExecutor(proxies=settings.SCAN_PROXY)
+        self.executor = StructuredExecutor(proxies=settings.SCAN_PROXY)
         self.audited_llm = create_audited_llm(
             model_name=settings.MODEL_NAME_WORKER,
             api_key=settings.OPENAI_API_KEY,
@@ -54,52 +54,84 @@ class BaseVulnNodes:
 
     def analyze_injection_points(self, state: Dict[str, Any]) -> dict:
         """通用注入点识别：Query 参数 + Body 参数 + RESTful 路径参数"""
-        points = []
+        points = [] # 格式: {"name": "id", "value": "1", "type": "query", "placeholder": "{{1}}"}
         
         # 1. 提取 Query 参数
-        if "?" in state["target_url"]:
-            points.extend([p.split("=")[0] for p in state["target_url"].split("?")[1].split("&") if "=" in p])
+        url = state["target_url"]
+        if "?" in url:
+            query_str = url.split("?")[1]
+            for p in query_str.split("&"):
+                if "=" in p:
+                    k, v = p.split("=", 1)
+                    points.append({
+                        "name": k,
+                        "value": v,
+                        "type": "query",
+                        "placeholder": f"{{{{{v}}}}}"
+                    })
         
         # 2. 提取 Body 参数 (如果存在)
-        if state.get("body"):
+        body = state.get("body")
+        if body:
             try:
                 # 尝试解析 JSON body
-                body_json = json.loads(state["body"])
+                body_json = json.loads(body)
                 if isinstance(body_json, dict):
-                    points.extend(list(body_json.keys()))
+                    for k, v in body_json.items():
+                        points.append({
+                            "name": k,
+                            "value": str(v),
+                            "type": "body_json",
+                            "placeholder": f"{{{{{v}}}}}"
+                        })
             except:
                 # 尝试解析 form-urlencoded body
-                points.extend([p.split("=")[0] for p in state["body"].split("&") if "=" in p])
+                for p in body.split("&"):
+                    if "=" in p:
+                        k, v = p.split("=", 1)
+                        points.append({
+                            "name": k,
+                            "value": v,
+                            "type": "body_form",
+                            "placeholder": f"{{{{{v}}}}}"
+                        })
         
         # 3. 启发式识别 RESTful 路径参数 (例如 /api/user/123)
-        path_parts = state["target_url"].split("?")[0].split("/")
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        path_parts = parsed.path.split("/")
         for i, part in enumerate(path_parts):
             # 如果路径部分看起来像 ID (纯数字或 UUID 格式)
             if part.isdigit() or (len(part) > 30 and "-" in part):
-                placeholder = "/".join(path_parts[:i] + ["{{PAYLOAD}}"] + path_parts[i+1:])
-                points.append(placeholder)
-        logger.info(f"识别到 {len(points)} 个潜在注入点: {points}")
+                points.append({
+                    "name": f"path_{i}",
+                    "value": part,
+                    "type": "path",
+                    "placeholder": f"{{{{{part}}}}}"
+                })
+
+        logger.info(f"识别到 {len(points)} 个潜在注入点")
         return {
-            "potential_points": list(set(points)),
-            self.retry_key: 0,
-            "test_results": [],
-            "history_results": [],
-            "analysis_feedback": []
+            "potential_points": points,
+            "planned_data": None
         }
 
     async def executor_node(self, state: Dict[str, Any]) -> dict:
         """通用执行器节点"""
-        results = await self.executor.execute_batch(
-            target_url=state["target_url"],
-            method=state["method"],
-            test_cases=state.get("test_results", []),
-            headers=state.get("headers"),
-            original_body=state.get("body"),
-            original_response=state.get("response_body")
-        )
+        # 从 planned_data 读取结构化任务包
+        structured_data = state.get("planned_data")
+        if not structured_data:
+            logger.warning("没有发现计划中的测试任务 (planned_data 为空)，跳过执行")
+            return {"test_results": [], "history_results": []}
+
+        # 执行结构化数据包
+        results = await self.executor.execute_structured(structured_data)
+        
+        # 将结果存入 test_results，并更新历史记录
         return {
-            "test_results": results,
-            "history_results": results
+            "test_results": results, 
+            "history_results": state.get("history_results", []) + results,
+            "planned_data": None  # 执行完后清空计划任务
         }
 
     def _safe_json_parse(self, content: str, default_decision: str = "give_up") -> Dict[str, Any]:
@@ -121,6 +153,71 @@ class BaseVulnNodes:
             logger.warning(f"{vuln_type} 分析逻辑自相矛盾 (False+FOUND)，自动修正决策为 give_up")
             return "give_up"
         return decision
+
+    def _build_fuzzed_request(self, state: Dict[str, Any], points: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        安全地构造带有 {{value}} 占位符的原始请求包。
+        """
+        fuzzed_url = state["target_url"]
+        fuzzed_body = state.get("body")
+        
+        # 1. 处理 Path 参数
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(fuzzed_url)
+        
+        if any(p["type"] == "path" for p in points):
+            path_parts = parsed.path.split("/")
+            for point in points:
+                if point["type"] == "path":
+                    try:
+                        idx = int(point["name"].split("_")[1])
+                        if idx < len(path_parts):
+                            path_parts[idx] = point["placeholder"]
+                    except: continue
+            new_path = "/".join(path_parts)
+            parsed = parsed._replace(path=new_path)
+            # 立即更新 fuzzed_url
+            fuzzed_url = urlunparse(parsed)
+
+        # 2. 处理 Query 参数
+        for point in points:
+            if point["type"] == "query":
+                name, val, placeholder = point["name"], point["value"], point["placeholder"]
+                # 匹配 ?name=val 或 &name=val
+                for prefix in ["?", "&"]:
+                    target = f"{prefix}{name}={val}"
+                    replacement = f"{prefix}{name}={placeholder}"
+                    if target in fuzzed_url:
+                        fuzzed_url = fuzzed_url.replace(target, replacement, 1)
+                        break
+
+        # 3. 处理 Body 参数
+        if fuzzed_body:
+            for point in points:
+                name, val, placeholder = point["name"], point["value"], point["placeholder"]
+                if point["type"] == "body_form":
+                    # 匹配 name=val 或 &name=val
+                    for prefix in ["", "&"]:
+                        target = f"{prefix}{name}={val}"
+                        replacement = f"{prefix}{name}={placeholder}"
+                        if target in fuzzed_body:
+                            fuzzed_body = fuzzed_body.replace(target, replacement, 1)
+                            break
+                elif point["type"] == "body_json":
+                        targets = [f'"{name}":"{val}"', f'"{name}": "{val}"', f'"{name}":{val}', f'"{name}": {val}']
+                        for t in targets:
+                            if t in fuzzed_body:
+                                # 精确替换该键值对中的值，避免误伤其他相同值的字段
+                                replacement = t.replace(val, placeholder, 1)
+                                fuzzed_body = fuzzed_body.replace(t, replacement, 1)
+                                break
+
+        return {
+            "method": state["method"],
+            "target_url": fuzzed_url,
+            "headers": state["headers"],
+            "body": fuzzed_body
+        }
 
     async def _generic_strategist_node(self, state: Dict[str, Any], system_prompt: str, vuln_type: str) -> dict:
         """通用生成器节点逻辑"""
@@ -144,7 +241,7 @@ class BaseVulnNodes:
 
         user_context = {
             "url": state["target_url"],
-            "points": state["potential_points"],
+            "points": [p["name"] for p in state["potential_points"]] if isinstance(state["potential_points"][0], dict) else state["potential_points"],
             "feedback": state.get("analysis_feedback"),
             "history_results": history_results_summary,
             "full_request": {
@@ -161,7 +258,7 @@ class BaseVulnNodes:
             request_id=state["request_id"],
             project_name=state.get("project_name", "Default")
         )
-        return {"test_results": test_cases}
+        return {"planned_data": test_cases}
 
     async def _generic_analyzer_node(
         self, 

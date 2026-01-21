@@ -6,10 +6,7 @@ from src.config.settings import settings
 from src.utils.auditor import auditor
 from src.core.llm.service import create_audited_llm
 from src.agents.xss.state import XSSState
-from src.core.engine.strategist import GenericStrategist
-from src.core.engine.executor import GenericExecutor
 from loguru import logger
-
 from src.agents.base.nodes import BaseVulnNodes
 
 from src.core.prompts.xss import XSS_GENERATOR_PROMPT, XSS_ANALYZER_PROMPT
@@ -26,24 +23,36 @@ class XSSNodes(BaseVulnNodes):
         # 策略 1: 如果是首次执行 (retry_count == 0 且无 feedback)，使用静态 Payload
         if state.get(self.retry_key, 0) == 0 and not state.get("analysis_feedback"):
             logger.info("XSS 首次执行，使用静态高频 Payloads 进行探测")
-            static_cases = []
+            
             points = state.get("potential_points", [])
+            if not points:
+                logger.warning("没有发现潜在注入点，跳过静态探测")
+                return {"planned_data": None}
+
+            # 1. 构造带占位符的原始数据包 (安全替换)
+            fuzzed_request = self._build_fuzzed_request(state, points)
+            
+            static_cases = []
             
             # 简单的启发式筛选：为避免请求爆炸，只对前 3 个参数进行测试
             target_points = points[:3] if len(points) > 3 else points
 
+            # 2. 生成测试用例
             for point in target_points:
+                placeholder = point["placeholder"]
                 for payload in self.STATIC_PAYLOADS:
-                    # 构造测试用例
-                    # Executor 会自动处理 point 是否包含 {{PAYLOAD}}
                     static_cases.append({
-                        "parameter": point,
+                        "parameter": placeholder,
                         "payload": payload
                     })
             
             if static_cases:
                 logger.info(f"生成静态 XSS 测试用例: {len(static_cases)} 个")
-                return {"test_results": static_cases}
+                structured_data = {
+                    "request": fuzzed_request,
+                    "test_cases": static_cases
+                }
+                return {"planned_data": structured_data}
 
         # 策略 2: 如果静态测试失败或有反馈，调用 LLM 进行针对性生成
         return await self._generic_strategist_node(state, XSS_GENERATOR_PROMPT, "XSS")

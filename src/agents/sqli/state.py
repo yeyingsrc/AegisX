@@ -1,24 +1,30 @@
-from typing import List, Optional
-from src.agents.manager.state import AgentState
+from typing import Annotated, List, Optional
+import operator
+from src.agents.manager.state import AgentState, reduce_overwrite, reduce_allow_none
 
 class SQLiState(AgentState):
     """
     SQL 注入专项攻击状态
     """
     # 漏洞分析进展
-    potential_points: List[str]
-    db_type: Optional[str]
-    
-    # 多参数测试用例
-    # 格式: [{"parameter": "id", "payload": "1'", "response": "...", "status": 200}]
-    test_results: List[dict]
-    
+    potential_points: Annotated[List[str], reduce_overwrite]
+    db_type: Annotated[Optional[str], reduce_overwrite]
     
     # 决策逻辑
-    next_step: str  # "found", "retry", "give_up"
-    sqli_retry_count: int
-    analysis_feedback: List[str] # 记录分析器的反馈，用于指导下一轮生成
+    next_step: Annotated[str, reduce_overwrite]  # "found", "retry", "give_up"
+    sqli_retry_count: Annotated[int, reduce_overwrite]
+    analysis_feedback: Annotated[List[str], operator.add] # 记录分析器的反馈，用于指导下一轮生成
+    
+    # 历史探测执行结果汇总 (用于指导策略进化)
+    history_results: Annotated[List[dict], operator.add]
+    
+    # 计划执行的任务包 (结构化格式)
+    # 格式: {"request": {...}, "test_cases": [...]}
+    planned_data: Annotated[Optional[dict], reduce_allow_none]
+     
+    # 当前轮次的测试结果
+    test_results: Annotated[List[dict], reduce_overwrite]
 
     # 攻击结果
-    is_vulnerable: bool
-    proof_of_concept: Optional[str]  # 记录成功的参数和 Payload
+    is_vulnerable: Annotated[bool, reduce_overwrite]
+    proof_of_concept: Annotated[Optional[str], reduce_overwrite]  # 记录成功的参数和 Payload

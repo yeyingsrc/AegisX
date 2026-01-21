@@ -15,6 +15,15 @@ class LLMAuditor:
     def record(self, agent_name: str, task_id: str, prompt: any, response: any, project_name: str = "Default"):
         """记录单次交互"""
         
+        # 0. 打印 AI 对话到控制台 (新增)
+        print("\n" + "="*50)
+        print(f"🤖 AI Conversation - Agent: {agent_name} | Task: {task_id}")
+        print("-" * 50)
+        print(f"👉 [PROMPT]\n{str(prompt)}")
+        print("-" * 50)
+        print(f"👈 [RESPONSE]\n{str(response)}")
+        print("="*50 + "\n")
+
         entry = {
             "timestamp": datetime.now().isoformat(),
             "project": project_name,
